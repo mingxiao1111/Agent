@@ -1,4 +1,5 @@
 # 智能医疗对话与诊疗 Agent 系统
+<img width="2881" height="1563" alt="image" src="https://github.com/user-attachments/assets/5f07eb56-2301-4523-b70a-710d6173526b" />
 
 > 一个面向医疗咨询场景的 Agent 系统原型，覆盖普通医疗咨询与中医辨证问诊两条工作流。  
 > 项目重点不在“聊天框接大模型”，而在医疗场景下的语义路由、安全分流、混合 RAG、多轮状态编排、模型调度与延迟优化。
