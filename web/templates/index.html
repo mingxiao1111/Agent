@@ -1,0 +1,153 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Medical Agent Demo</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="scene"></div>
+    <button
+      id="toggle-demo"
+      class="sidebar-toggle"
+      type="button"
+      aria-label="展开快速演示问题"
+      aria-expanded="false"
+      aria-controls="demo-panel"
+    >
+      <span class="sidebar-toggle-dot" aria-hidden="true"></span>
+      <span class="sidebar-toggle-text">演示</span>
+    </button>
+    <div id="drawer-mask" class="drawer-mask" hidden></div>
+    <aside id="demo-panel" class="demo-drawer" aria-label="快速演示问题">
+      <div class="drawer-head">
+        <h2>快速演示问题</h2>
+        <button id="demo-close" class="drawer-close" type="button" aria-label="收起演示问题">收起</button>
+      </div>
+      <button class="chip" data-query="我突然胸痛并呼吸困难，现在该怎么办？">高危分诊</button>
+      <button class="chip" data-query="我有点头痛和失眠，这是什么情况？">症状咨询</button>
+      <button class="chip" data-query="西药和中成药能一起吃吗？">用药安全</button>
+      <button class="chip" data-query="体检报告显示甘油三酯高，下一步需要做什么检查？">报告解读</button>
+      <button class="chip" data-query="最近精神有点恍惚，总是心慌，该挂哪个科？">就医流程</button>
+
+      <div class="legend">
+        <h3>结果标签</h3>
+        <p><span class="tag risk-low">LOW</span> 常规流程</p>
+        <p><span class="tag risk-high">HIGH</span> 急诊+人工</p>
+      </div>
+
+      <button id="toggle-meta" class="toggle-btn strong" type="button" aria-pressed="false">显示状态信息</button>
+      <div class="llm-switcher" aria-label="模型设置">
+        <div class="llm-switcher-title">普通咨询模型</div>
+        <label class="llm-switcher-label" for="llm-model-select">模型</label>
+        <select id="llm-model-select" class="llm-select">
+          <option value="deepseek-v3-2-251201">DeepSeek V3.2</option>
+          <option value="doubao-seed-2-0-pro-260215">Doubao Seed 2.0 Pro</option>
+        </select>
+        <button id="toggle-thinking" class="toggle-btn" type="button" aria-pressed="false">思考: 关</button>
+      </div>
+    </aside>
+    <main class="shell">
+      <header class="hero-title">
+        <h1>你身边的智能医疗助手</h1>
+      </header>
+
+      <section id="layout" class="layout">
+        <section class="chat">
+          <div class="top-left-tools">
+            <div id="mode-switch" class="mode-switch" role="tablist" aria-label="咨询模式切换">
+              <button id="mode-normal" class="mode-tab is-active" type="button" role="tab" aria-selected="true">普通咨询</button>
+              <button id="mode-tcm" class="mode-tab" type="button" role="tab" aria-selected="false">中医辨证</button>
+            </div>
+          </div>
+          <button id="toggle-title-color" class="title-color-btn top-right" type="button" aria-pressed="false">背景: 白色</button>
+
+          <section id="tcm-flow" class="tcm-flow" hidden aria-label="中医辨证流程">
+            <div id="flow-collect" class="flow-step is-active">
+              <span class="flow-index">1</span>
+              <span class="flow-text">收集症状</span>
+            </div>
+            <div id="flow-questionnaire" class="flow-step">
+              <span class="flow-index">2</span>
+              <span class="flow-text">问卷辨证</span>
+            </div>
+            <div id="flow-result" class="flow-step">
+              <span class="flow-index">3</span>
+              <span class="flow-text">阶段结果</span>
+            </div>
+          </section>
+
+          <section id="tcm-progress-card" class="tcm-progress-card" hidden>
+            <ul id="tcm-progress-list" class="tcm-progress-list"></ul>
+          </section>
+
+          <div id="messages" class="messages">
+            <div id="thread" class="thread"></div>
+
+            <section id="suggestions" class="suggestions" hidden>
+              <div class="suggestions-title">猜你想问</div>
+              <div id="suggestion-list" class="suggestion-list"></div>
+            </section>
+          </div>
+          <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" hidden>回到底部</button>
+
+          <section id="tcm-panel" class="tcm-panel" hidden>
+            <div class="tcm-head">
+              <strong>中医辨证问卷</strong>
+              <span id="tcm-mode-badge" class="tcm-badge">进行中</span>
+            </div>
+            <section id="tcm-analysis-stack" class="tcm-analysis-stack" hidden>
+              <div id="tcm-analysis-list" class="tcm-analysis-list"></div>
+            </section>
+            <form id="tcm-form" class="tcm-form"></form>
+            <button id="tcm-submit" type="button" class="tcm-submit">提交问卷</button>
+            <div id="tcm-submit-status" class="tcm-submit-status" aria-live="polite"></div>
+          </section>
+
+          <div id="activity" class="activity hidden" hidden aria-live="polite"></div>
+
+          <form id="chat-form" class="composer">
+            <div class="composer-shell">
+              <label for="query" class="sr-only">请输入咨询问题</label>
+              <textarea
+                id="query"
+                rows="1"
+                maxlength="500"
+                aria-label="请输入咨询问题"
+                placeholder="有医疗相关的问题都可以问我哦~"
+              ></textarea>
+              <div class="composer-actions">
+                <div class="composer-tools">
+                  <button
+                    id="toggle-mode-inline"
+                    class="toggle-mode-inline"
+                    type="button"
+                    aria-pressed="false"
+                    aria-label="切换中医模式"
+                    title="切换中医模式"
+                  >
+                    <span class="toggle-mode-label">中医模式</span>
+                    <span class="toggle-mode-pill" aria-hidden="true">
+                      <span class="toggle-mode-thumb"></span>
+                    </span>
+                  </button>
+                  <button id="toggle-online" class="toggle-online-inline" type="button" aria-pressed="false">联网: 关</button>
+                </div>
+                <button type="submit" id="send-btn" aria-label="发送消息">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
