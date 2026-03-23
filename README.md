@@ -1,4 +1,4 @@
-# 智能医疗对话与诊疗 Agent 系统
+# 智能医疗对话与诊疗Agent助手 
 <img width="2881" height="1563" alt="image" src="https://github.com/user-attachments/assets/5f07eb56-2301-4523-b70a-710d6173526b" />
 
 > 一个面向医疗咨询场景的 Agent 系统原型，覆盖普通医疗咨询与中医辨证问诊两条工作流。  
@@ -7,8 +7,6 @@
 ## 项目简介
 
 本项目使用 `LangChain + LangGraph + Flask` 构建了一套智能医疗对话与诊疗 Agent 系统。系统面向真实医疗咨询流程，围绕“专问专答、风险优先、过程可控、异常可回退”设计，支持普通医疗咨询和中医辨证问诊双模式，并对检索链路、模型路由、缓存与前端交互做了较完整的工程化优化。
-
-如果把它作为 GitHub 展示或面试项目，最值得强调的不是“用了大模型”，而是下面这些工程能力已经落到了代码里：
 
 - 语义路由分流：规则分类 + LLM 精修，动态分流到症状咨询、挂号流程、报告解读、用药安全、医学科普、人工服务等模块。
 - 双工作流编排：普通咨询链路与中医辨证链路显式拆分，避免单 Prompt 承担全部业务逻辑。
@@ -195,7 +193,6 @@ flowchart TD
 
 前端位于 [`web/templates/index.html`](./web/templates/index.html)、[`web/static/app.js`](./web/static/app.js)、[`web/static/style.css`](./web/static/style.css)。
 
-这里的设计重点不是装饰，而是把 Agent 过程“显性化”：
 
 - 普通咨询支持 SSE 流式输出，并做前端细粒度切片，提升 token streaming 观感。
 - 中医模式支持阶段状态卡，按“提取症状 / 风险筛查 / 检索医案 / 辨证分析 / 生成问卷”逐步推进。
