@@ -1,9 +1,10 @@
 # 智能医疗对话与诊疗 Agent 助手demo 
 
-<img width="2892" height="1556" alt="image" src="https://github.com/user-attachments/assets/f298824a-5c3c-447a-a775-657485f658e9" />
 
 > 一个面向医疗咨询场景的 Agent 助手demo，覆盖医疗咨询与中医辨证问诊两条工作流。  
 > 项目主要以医疗方向的聊天助手出发，技术细节包括在医疗场景下的语义路由、安全分流、混合 RAG、多轮状态编排、模型调度与延迟优化等方面主要。
+
+<img width="2892" height="1556" alt="image" src="https://github.com/user-attachments/assets/f298824a-5c3c-447a-a775-657485f658e9" />
 
 ## 项目简介
 
