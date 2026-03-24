@@ -1,15 +1,16 @@
-# 智能医疗对话与诊疗Agent助手 
-<img width="2881" height="1563" alt="image" src="https://github.com/user-attachments/assets/5f07eb56-2301-4523-b70a-710d6173526b" />
+# 智能医疗对话与诊疗 Agent 助手demo 
 
-> 一个面向医疗咨询场景的 Agent 系统原型，覆盖普通医疗咨询与中医辨证问诊两条工作流。  
-> 项目重点不在“聊天框接大模型”，而在医疗场景下的语义路由、安全分流、混合 RAG、多轮状态编排、模型调度与延迟优化。
+<img width="2892" height="1556" alt="image" src="https://github.com/user-attachments/assets/f298824a-5c3c-447a-a775-657485f658e9" />
+
+> 一个面向医疗咨询场景的 Agent 助手demo，覆盖医疗咨询与中医辨证问诊两条工作流。  
+> 项目主要以医疗方向的聊天助手出发，技术细节包括在医疗场景下的语义路由、安全分流、混合 RAG、多轮状态编排、模型调度与延迟优化等方面主要。
 
 ## 项目简介
 
-本项目使用 `LangChain + LangGraph + Flask` 构建了一套智能医疗对话与诊疗 Agent 系统。系统面向真实医疗咨询流程，围绕“专问专答、风险优先、过程可控、异常可回退”设计，支持普通医疗咨询和中医辨证问诊双模式，并对检索链路、模型路由、缓存与前端交互做了较完整的工程化优化。
+本项目使用 `LangChain + LangGraph + Flask` 构建了一套智能医疗对话与诊疗 Agent 产品。产品面向真实医疗咨询流程，围绕“专问专答、风险优先、过程可控、异常可回退”设计，支持医疗咨询和中医辨证问诊双模式，并对检索链路、模型路由、缓存与前端交互做了较完整的工程化优化。
 
 - 语义路由分流：规则分类 + LLM 精修，动态分流到症状咨询、挂号流程、报告解读、用药安全、医学科普、人工服务等模块。
-- 双工作流编排：普通咨询链路与中医辨证链路显式拆分，避免单 Prompt 承担全部业务逻辑。
+- 双工作流编排：医疗咨询链路与中医辨证链路显式拆分，避免单 Prompt 承担全部业务逻辑。
 - 多轮中医辨证 Agent：基于 LangGraph 构建 `Collect Graph + Round Graph`，通过动态问卷逐轮筛选证候并收敛。
 - 混合 RAG 检索：支持 `txt / md / docx / jsonl` 异构语料，使用关键词召回、向量召回、RRF 融合、来源权重与分源召回配额共同优化结果。
 - 安全优先架构：高危症状与敏感内容优先拦截，中断生成并给出急诊/人工接管建议。
@@ -21,7 +22,7 @@
 | 模块 | 实现方式 | 工程价值 |
 | --- | --- | --- |
 | 语义路由分流 | 规则意图分类 + LLM 结构化精修 + 低置信度转人工 | 让不同问题进入不同链路，实现专问专答 |
-| 普通咨询工作流 | `normalize -> risk -> intent/retrieve并发 -> tools -> response` | 将安全、检索、工具、回复拆成可控阶段 |
+| 医疗咨询工作流 | `normalize -> risk -> intent/retrieve并发 -> tools -> response` | 将安全、检索、工具、回复拆成可控阶段 |
 | 中医辨证工作流 | `Collect Graph + Round Graph` 双图状态机 | 支持多轮问诊、动态问卷与阶段性辨证 |
 | 混合 RAG | 关键词检索 + 向量检索 + RRF + 分数补偿 + 来源权重 + 分源配额 | 提升异构语料召回质量，降低单一来源偏置 |
 | 语料处理 | `txt` 按行清洗截断，`md/docx` 按段抽取后再做句级聚合切分 | 兼顾书籍类语料覆盖率与检索粒度 |
@@ -42,10 +43,10 @@ flowchart LR
     UI --> API["Flask API"]
     API --> MODE{"Mode"}
 
-    MODE -->|普通咨询| GP["General Pipeline"]
+    MODE -->|医疗助手| GP["General Pipeline"]
     MODE -->|中医辨证| TP["TCM Workflow"]
 
-    subgraph G["普通咨询链路"]
+    subgraph G["医疗助手链路"]
         GP --> G1["Normalize"]
         G1 --> G2["Risk Check"]
         G2 -->|高危| G3["Emergency / Handoff"]
@@ -111,9 +112,9 @@ flowchart TD
 
 ## 技术方案
 
-### 1. 普通咨询链路
+### 1. 医疗咨询链路
 
-普通咨询入口位于 [`app/async_pipeline.py`](./app/async_pipeline.py)、[`app/workflow.py`](./app/workflow.py)、[`app/llm_chains.py`](./app/llm_chains.py)。
+医疗咨询入口位于 [`app/async_pipeline.py`](./app/async_pipeline.py)、[`app/workflow.py`](./app/workflow.py)、[`app/llm_chains.py`](./app/llm_chains.py)。
 
 核心设计不是“直接把用户输入交给 LLM”，而是按阶段拆解：
 
@@ -166,8 +167,8 @@ flowchart TD
 
 当前策略是按任务复杂度分配模型：
 
-- 普通咨询意图识别：`doubao-seed-2-0-mini-260215`
-- 普通咨询主回复：`deepseek-v3-2-251201`
+- 医疗咨询意图识别：`doubao-seed-2-0-mini-260215`
+- 医疗咨询主回复：`deepseek-v3-2-251201`
 - “猜你想问”：`doubao-seed-2-0-mini-260215`
 - 中医症状提取：`doubao-seed-2-0-mini-260215`
 - 中医辨证分析 / 问卷 / 总结：`deepseek-v3-2-251201`
@@ -183,7 +184,7 @@ flowchart TD
 
 这部分是项目从“能跑”走向“可展示”的关键：
 
-- 普通咨询链路采用异步流水线，`intent` 与 `retrieve` 并行执行。
+- 医疗咨询链路采用异步流水线，`intent` 与 `retrieve` 并行执行。
 - “猜你想问”与主回复流式生成并行，避免在末尾额外等待。
 - 设计了三级缓存：`L1 内存缓存 + L2 SQLite 热缓存 + L3 SQLite 冷缓存`。
 - 缓存粒度不是只缓存最终回答，而是覆盖 `intent / retrieve / tools / final` 等阶段。
@@ -194,8 +195,8 @@ flowchart TD
 前端位于 [`web/templates/index.html`](./web/templates/index.html)、[`web/static/app.js`](./web/static/app.js)、[`web/static/style.css`](./web/static/style.css)。
 
 
-- 普通咨询支持 SSE 流式输出，并做前端细粒度切片，提升 token streaming 观感。
-- 中医模式支持阶段状态卡，按“提取症状 / 风险筛查 / 检索医案 / 辨证分析 / 生成问卷”逐步推进。
+- 医疗咨询支持 SSE 流式输出，并做前端细粒度切片，提升 token streaming 观感。
+- 辨证模式支持阶段状态卡，按“提取症状 / 风险筛查 / 检索医案 / 辨证分析 / 生成问卷”逐步推进。
 - 辨证结果与问卷拆成独立卡片，减少大段等待期间的空白感。
 - 多轮问卷以新卡片追加，而不是覆盖旧轮结果，方便观察辨证收敛过程。
 
@@ -204,8 +205,8 @@ flowchart TD
 ```text
 .
 ├─ app/
-│  ├─ async_pipeline.py      # 普通咨询异步流水线 + 三级缓存
-│  ├─ workflow.py            # 普通咨询工作流与工具调度
+│  ├─ async_pipeline.py      # 医疗咨询异步流水线 + 三级缓存
+│  ├─ workflow.py            # 医疗咨询工作流与工具调度
 │  ├─ llm_chains.py          # 意图识别 / 主回复 / 流式输出 / 模型路由
 │  ├─ tcm_graph.py           # 中医 Collect Graph + Round Graph
 │  ├─ tcm.py                 # 中医检索、切分、问卷、辨证与总结
@@ -332,8 +333,8 @@ python scripts/eval.py
 
 ## 深入阅读
 
-- [普通咨询异步流水线](./app/async_pipeline.py)
-- [普通咨询工作流](./app/workflow.py)
+- [医疗咨询异步流水线](./app/async_pipeline.py)
+- [医疗咨询工作流](./app/workflow.py)
 - [中医辨证工作流](./app/tcm_graph.py)
 - [中医核心能力实现](./app/tcm.py)
 
