@@ -6,13 +6,13 @@
 <img width="2908" height="1574" alt="image" src="https://github.com/user-attachments/assets/f308e97a-4673-4667-b8da-799b54163100" />
 
 
-> 一个面向医疗咨询场景的 Agent 助手demo，覆盖医疗咨询与中医辨证问诊两条工作流。  
+> 一个面向医疗咨询场景的 Agent 助手demo，覆盖医疗咨询与辨证问诊两条工作流。  
 > 项目主要以医疗方向的聊天助手出发，技术细节包括语义路由、安全分流、混合 RAG、多轮状态编排、模型调度与延迟优化等。
 
 
 ## 项目简介
 
-本项目使用 `LangChain + LangGraph + Flask` 构建了一套智能医疗对话与诊疗 Agent 产品。产品面向真实医疗咨询流程，围绕“专问专答、风险优先、过程可控、异常可回退”设计，支持医疗咨询和中医辨证问诊双模式，并对检索链路、模型路由、缓存与前端交互做了较完整的工程化优化。
+本项目使用 `LangChain + LangGraph + Flask` 构建了一套智能医疗对话与诊疗 Agent 产品。产品面向真实医疗咨询流程，围绕“专问专答、风险优先、过程可控、异常可回退”设计，支持医疗咨询和辨证问诊双模式，并对检索链路、模型路由、缓存与前端交互做了较完整的工程化优化。
 
 
 <img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/205c178a-f121-4097-b36f-79849d74d67d" />
