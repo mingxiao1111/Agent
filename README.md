@@ -14,6 +14,11 @@
 
 本项目使用 `LangChain + LangGraph + Flask` 构建了一套智能医疗对话与诊疗 Agent 产品。产品面向真实医疗咨询流程，围绕“专问专答、风险优先、过程可控、异常可回退”设计，支持医疗咨询和中医辨证问诊双模式，并对检索链路、模型路由、缓存与前端交互做了较完整的工程化优化。
 
+
+<img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/205c178a-f121-4097-b36f-79849d74d67d" />
+
+
+
 - 语义路由分流：规则分类 + LLM 精修，动态分流到症状咨询、挂号流程、报告解读、用药安全、医学科普、人工服务等模块。
 - 双工作流编排：医疗咨询链路与中医辨证链路显式拆分，避免单 Prompt 承担全部业务逻辑。
 - 多轮中医辨证 Agent：基于 LangGraph 构建 `Collect Graph + Round Graph`，通过动态问卷逐轮筛选证候并收敛。
