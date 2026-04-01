@@ -21,6 +21,7 @@
 
 - 语义路由分流：规则分类 + LLM 精修，动态分流到症状咨询、挂号流程、报告解读、用药安全、医学科普、人工服务等模块。
 - 双工作流编排：医疗咨询链路与中医辨证链路显式拆分，避免单 Prompt 承担全部业务逻辑。
+- 分层记忆管理：普通咨询实现 `M0-M3 + M2` 组合记忆，覆盖最近窗口、段内摘要、长期事实与医疗核心实体，缓解长对话串味。
 - 多轮中医辨证 Agent：基于 LangGraph 构建 `Collect Graph + Round Graph`，通过动态问卷逐轮筛选证候并收敛。
 - 混合 RAG 检索：支持 `txt / md / docx / jsonl` 异构语料，使用关键词召回、向量召回、RRF 融合、来源权重与分源召回配额共同优化结果。
 - 安全优先架构：高危症状与敏感内容优先拦截，中断生成并给出急诊/人工接管建议。
@@ -34,13 +35,14 @@
 | 语义路由分流 | 规则意图分类 + LLM 结构化精修 + 低置信度转人工 | 让不同问题进入不同链路，实现专问专答 |
 | 医疗咨询工作流 | `normalize -> risk -> intent/retrieve并发 -> tools -> response` | 将安全、检索、工具、回复拆成可控阶段 |
 | 中医辨证工作流 | `Collect Graph + Round Graph` 双图状态机 | 支持多轮问诊、动态问卷与阶段性辨证 |
+| 记忆管理 | `M0 最近窗口 + M1 段内摘要 + M2 长期记忆 + M3 医疗核心实体` | 降低长对话遗忘、重复追问与跨意图串扰 |
 | 混合 RAG | 关键词检索 + 向量检索 + RRF + 分数补偿 + 来源权重 + 分源配额 | 提升异构语料召回质量，降低单一来源偏置 |
 | 语料处理 | `txt` 按行清洗截断，`md/docx` 按段抽取后再做句级聚合切分 | 兼顾书籍类语料覆盖率与检索粒度 |
 | Milvus 向量层 | Milvus 集合拆分、默认 HNSW、支持本地向量后端兜底 | 为更大规模语料预留扩展空间 |
 | 模型后端抽象 | 聊天层与 embedding 层均支持多平台切换 | 降低模型迁移成本，方便后续接入更多供应商 |
 | 模型路由 | 意图识别/猜你想问/症状提取走快模型，主回答/辨证分析走强模型 | 在速度与效果之间做任务级平衡 |
 | 安全架构 | 红旗症状、敏感词/正则内容拦截、人工接管摘要 | 适配医疗场景对风险控制的要求 |
-| 延迟优化 | 异步流水线、阶段级缓存、猜你想问并行预取 | 降低首包等待和重复请求开销 |
+| 延迟优化 | 异步流水线、阶段级缓存、猜你想问并行预取、记忆清洗降级 | 降低首包等待和重复请求开销 |
 | 交互体验 | SSE 流式输出、阶段进度卡、辨证结果卡、问卷卡 | 把复杂 Agent 过程可视化，提升可感知性 |
 
 ## 系统流程图
@@ -136,6 +138,18 @@ flowchart TD
 
 这条链路的重点是：既保证医疗场景下的边界控制，又把能并行的阶段前置并行，减少用户等待。
 
+医疗咨询链路还实现了分层记忆：
+
+- `M0`：只保留当前意图段最近 3 轮原文，用于保证短窗口上下文的表达细节。
+- `M1`：把当前意图段更早的轮次压缩为摘要行，避免长对话把提示词撑爆。
+- `M2`：把高价值用户事实清洗后写入本地长期记忆文件，并按 query 检索召回。
+- `M3`：维护医疗核心实体记忆，重点记录过敏史、慢病/基础病、当前用药、妊娠/哺乳、手术住院史、家族史。
+
+为减少长对话“串味”，普通咨询不是简单追加历史，而是做了两层控制：
+
+- 先按意图与语义漂移把会话切成 segment，当前轮默认只读取活跃 segment 的 `M0 + M1`。
+- `M2` 检索阶段会优先召回同意图长期记忆，跨意图内容默认降权，只有相似度足够高才会回补。
+
 ### 2. 中医辨证链路
 
 中医链路位于 [`app/tcm_graph.py`](./app/tcm_graph.py) 与 [`app/tcm.py`](./app/tcm.py)。
@@ -199,6 +213,7 @@ flowchart TD
 - 设计了三级缓存：`L1 内存缓存 + L2 SQLite 热缓存 + L3 SQLite 冷缓存`。
 - 缓存粒度不是只缓存最终回答，而是覆盖 `intent / retrieve / tools / final` 等阶段。
 - 对模型调用增加 `LLM_TRACE` 日志，记录 prompt、response、model route，便于排查多模型编排问题。
+- 长期记忆默认采用本地哈希向量检索，无需额外依赖即可落地；启用 LLM 清洗时带有失败熔断与冷却期，避免因模型异常拖慢主链路。
 
 ### 6. 前端交互设计
 
@@ -217,10 +232,10 @@ flowchart TD
 ├─ app/
 │  ├─ async_pipeline.py      # 医疗咨询异步流水线 + 三级缓存
 │  ├─ workflow.py            # 医疗咨询工作流与工具调度
-│  ├─ llm_chains.py          # 意图识别 / 主回复 / 流式输出 / 模型路由
+│  ├─ llm_chains.py          # 意图识别 / 主回复 / 流式输出 / 模型路由 / 记忆清洗
 │  ├─ tcm_graph.py           # 中医 Collect Graph + Round Graph
 │  ├─ tcm.py                 # 中医检索、切分、问卷、辨证与总结
-│  ├─ web.py                 # Flask API + SSE 接口
+│  ├─ web.py                 # Flask API + SSE 接口 + 普通咨询 M0-M3/M2 记忆
 │  ├─ guardrails.py          # 高危症状与敏感内容拦截
 │  └─ tools.py               # 规则工具与本地知识库查询
 ├─ web/
@@ -271,6 +286,24 @@ SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
 TCM_VECTOR_BACKEND=milvus
 MILVUS_URI=http://127.0.0.1:19530
 TCM_MILVUS_USE_HNSW=1
+CHAT_MEMORY_M0_TURNS=3
+CHAT_MEMORY_M1_MAX_CHARS=1600
+CHAT_MEMORY_MAX_SEGMENTS=12
+CHAT_MEMORY_SEGMENT_SWITCH_STREAK=2
+CHAT_MEMORY_SEGMENT_SIM_THRESHOLD=0.55
+CHAT_MEMORY_INTENT_CONF_THRESHOLD=0.75
+
+CHAT_MEMORY_M2_ENABLED=true
+CHAT_MEMORY_M2_RETRIEVE_TOPK=3
+CHAT_MEMORY_M2_MIN_SIM=0.12
+CHAT_MEMORY_M2_INTENT_SAME_BONUS=0.14
+CHAT_MEMORY_M2_INTENT_CROSS_PENALTY=0.08
+CHAT_MEMORY_M2_CROSS_INTENT_MIN_SIM=0.18
+
+CHAT_MEMORY_M2_LLM_CLEAN_ENABLED=false
+CHAT_MEMORY_M2_LLM_MIN_SALIENCE=0.45
+CHAT_MEMORY_M2_LLM_FAIL_STREAK_LIMIT=3
+CHAT_MEMORY_M2_LLM_COOLDOWN_SEC=300
 ```
 
 如果需要回退到本地向量检索，可设置：
@@ -338,7 +371,8 @@ python scripts/eval.py
 ## 说明
 
 - 本项目是医疗咨询辅助系统，不提供临床诊断与个体化处方。
-- 当前普通咨询短期记忆和中医会话状态保存在进程内，服务重启后不会持久化。
+- 普通咨询 `M2` 长期记忆会持久化到 `data/general_long_memory.jsonl`，服务重启后可按 `session_id` 回灌。
+- `M2` 默认使用本地哈希向量检索；如开启 `CHAT_MEMORY_M2_LLM_CLEAN_ENABLED=true`，会先尝试 LLM 清洗，失败时自动回退规则清洗并进入冷却期。
 - Milvus 不可用时，中医向量检索可回退到本地 `SKLearnVectorStore`。
 
 ## 深入阅读
