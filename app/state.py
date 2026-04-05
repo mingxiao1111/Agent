@@ -11,6 +11,8 @@ class AgentState(TypedDict, total=False):
     risk_level: str
     risk_reason: str
     intent: str
+    secondary_intents: list[str]
+    intent_candidates: list[str]
     intent_confidence: float
     intent_source: str
     handoff_hint: bool

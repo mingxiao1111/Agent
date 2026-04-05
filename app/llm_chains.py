@@ -18,7 +18,18 @@ from pydantic import BaseModel, Field
 
 from .chat_backend import build_chat_model, is_chat_enabled
 from .llm_trace import log_error, log_model_route, log_prompt, log_response
+from .model_compat import supports_volcengine_reasoning, volcengine_reasoning_kwargs
 from .online_search import fetch_tavily_context
+from .prompts import (
+    FOLLOWUP_SYSTEM_PROMPT,
+    FOLLOWUP_USER_PROMPT,
+    INTENT_ROUTE_SYSTEM_PROMPT,
+    INTENT_ROUTE_USER_PROMPT,
+    MEMORY_FACT_SYSTEM_PROMPT,
+    MEMORY_FACT_USER_PROMPT,
+    RESPONSE_SYSTEM_PROMPT,
+    RESPONSE_USER_PROMPT,
+)
 
 INTENT_LABELS = {
     "daily_chat",
@@ -81,12 +92,21 @@ class IntentRouteOutput(BaseModel):
     intent: str = Field(description="意图标签")
     confidence: float = Field(description="意图置信度，0到1")
     needs_handoff: bool = Field(description="是否建议人工接管")
+    secondary_intents: list[str] = Field(default_factory=list, description="次意图列表，0到2个，不包含主意图")
 
 
 class FollowupOutput(BaseModel):
     """猜你想问结构化输出。"""
 
     questions: list[str] = Field(description="3条用户下一步可能追问的问题")
+
+
+class MemoryFactOutput(BaseModel):
+    """长期记忆事实清洗输出。"""
+
+    fact: str = Field(description="一句可复用的用户事实，中文，<=120字")
+    salience: float = Field(description="事实重要度，0到1")
+    is_profile_fact: bool = Field(description="是否属于稳定画像事实")
 
 
 def _extract_text(raw_output: Any) -> str:
@@ -147,6 +167,20 @@ def _normalize_questions(items: list[Any]) -> list[str]:
         seen.add(text)
         out.append(text)
         if len(out) == 3:
+            break
+    return out
+
+
+def _normalize_intents(items: list[Any], *, exclude: set[str] | None = None, limit: int = 2) -> list[str]:
+    out: list[str] = []
+    seen = set(exclude or set())
+    for item in items:
+        intent = str(item or "").strip()
+        if intent not in INTENT_LABELS or intent in seen:
+            continue
+        seen.add(intent)
+        out.append(intent)
+        if len(out) >= max(0, int(limit)):
             break
     return out
 
@@ -251,11 +285,6 @@ def _volcengine_base_url() -> str:
     return str(os.getenv("VOLCENGINE_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")).strip()
 
 
-def _supports_thinking(model_name: str) -> bool:
-    name = str(model_name or "").strip().lower()
-    return bool(name and ("doubao-seed-2-0-pro" in name or "deepseek-v3-2" in name))
-
-
 def _build_volcengine_chat_model(
     *,
     model_name: str,
@@ -266,10 +295,8 @@ def _build_volcengine_chat_model(
     from langchain_openai import ChatOpenAI
 
     kwargs: dict[str, Any] = {}
-    # 对 OpenAI-compatible 客户端，供应商扩展参数应放在 extra_body。
-    # 直接塞到 model_kwargs 会被提升为 create() 顶层参数，触发 unexpected keyword。
-    if _supports_thinking(model_name) and bool(thinking):
-        kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+    if supports_volcengine_reasoning(model_name):
+        kwargs.update(volcengine_reasoning_kwargs(model_name=model_name, thinking=bool(thinking)))
 
     return ChatOpenAI(
         model=model_name,
@@ -444,6 +471,7 @@ def classify_intent_with_llm(
             "intent": fallback_intent,
             "confidence": 0.66 if fallback_intent != "other" else 0.45,
             "needs_handoff": fallback_intent in {"human_service", "after_sales"},
+            "secondary_intents": [],
             "source": "rule",
         }
 
@@ -454,18 +482,11 @@ def classify_intent_with_llm(
             [
                 (
                     "system",
-                    "你是医疗客服路由器。先判断用户请求属于医疗还是非医疗，再映射到指定意图。"
-                    "不做医疗诊断。严格按输出格式返回，不要输出其他文本。"
-                    "可选 intent: daily_chat|symptom_consult|medical_knowledge|medication_question|"
-                    "lifestyle_guidance|appointment_process|report_interpretation|after_sales|"
-                    "human_service|non_medical|other。"
-                    "其中 symptom_consult 表示健康问题与症状咨询（非诊断）。",
+                    INTENT_ROUTE_SYSTEM_PROMPT,
                 ),
                 (
                     "human",
-                    "用户输入: {query}\n"
-                    "规则候选意图: {fallback_intent}\n"
-                    "输出格式要求:\n{format_instructions}\n",
+                    INTENT_ROUTE_USER_PROMPT,
                 ),
             ]
         )
@@ -489,11 +510,13 @@ def classify_intent_with_llm(
 
         confidence = _to_confidence(parsed.confidence, 0.62)
         needs_handoff = bool(parsed.needs_handoff)
+        secondary_intents = _normalize_intents(list(parsed.secondary_intents or []), exclude={intent})
 
         return {
             "intent": intent,
             "confidence": confidence,
             "needs_handoff": needs_handoff,
+            "secondary_intents": secondary_intents,
             "source": "llm",
         }
     except Exception as exc:
@@ -503,6 +526,7 @@ def classify_intent_with_llm(
             "intent": fallback_intent,
             "confidence": 0.63 if fallback_intent != "other" else 0.45,
             "needs_handoff": fallback_intent in {"human_service", "after_sales"},
+            "secondary_intents": [],
             "source": "rule",
         }
 
@@ -518,36 +542,11 @@ def _response_prompt() -> ChatPromptTemplate:
         [
             (
                 "system",
-                "你是医疗客服助手。"
-                "你会收到意图(intent)、风险等级(risk_level)、工具结果、知识库和在线信息。"
-                "请优先参考当前 intent 的建议组织回复，不要机械套模板。"
-                "\n"
-                "当前 intent 的优先建议（软约束，可自然表达）:"
-                "\n{intent_guidance}"
-                "\n"
-                "安全边界："
-                "\n- 严禁做诊断、开处方、替代医生。"
-                "\n- 若 risk_level=high 或信息不足且存在风险，必须明确建议线下就医或转人工。"
-                "\n- 若 handoff=true，应在结尾明确建议人工复核。"
-                "\n"
-                "输出要求："
-                "\n- 仅输出中文。"
-                "\n- 结构清晰，允许自然段或分点，不强制固定条数。"
-                "\n- 先给结论/建议，再给依据或注意事项。"
-                "\n- 不要输出与医疗安全无关的冗余内容。",
+                RESPONSE_SYSTEM_PROMPT,
             ),
             (
                 "human",
-                "用户问题: {query}\n"
-                "意图: {intent}\n"
-                "风险等级: {risk_level}\n"
-                "工具结果: {tool_results}\n"
-                "知识库: {context_text}\n"
-                "引用ID: {citations}\n"
-                "短期记忆: {conversation_history}\n"
-                "Tavily在线信息: {online_context}\n"
-                "是否建议转人工: {handoff}\n"
-                "请给出最终回复。",
+                RESPONSE_USER_PROMPT,
             ),
         ]
     )
@@ -557,6 +556,7 @@ def _build_response_inputs(
     *,
     query: str,
     intent: str,
+    secondary_intents: list[str],
     risk_level: str,
     tool_results: dict[str, Any],
     context_docs: list[dict[str, Any]],
@@ -583,8 +583,12 @@ def _build_response_inputs(
     return {
         "query": query,
         "intent": intent,
+        "secondary_intents": ", ".join(secondary_intents) if secondary_intents else "none",
         "risk_level": risk_level,
-        "intent_guidance": _intent_soft_guidance(intent),
+        "intent_guidance": "；".join(
+            [_intent_soft_guidance(intent)]
+            + [_intent_soft_guidance(item) for item in secondary_intents if item in INTENT_LABELS]
+        ),
         "tool_results": json.dumps(tool_results, ensure_ascii=False),
         "context_text": context_text,
         "citations": ", ".join(citations) if citations else "none",
@@ -598,6 +602,7 @@ def generate_response_with_llm(
     *,
     query: str,
     intent: str,
+    secondary_intents: list[str],
     risk_level: str,
     tool_results: dict[str, Any],
     context_docs: list[dict[str, Any]],
@@ -618,6 +623,7 @@ def generate_response_with_llm(
         payload = _build_response_inputs(
             query=query,
             intent=intent,
+            secondary_intents=secondary_intents,
             risk_level=risk_level,
             tool_results=tool_results,
             context_docs=context_docs,
@@ -643,6 +649,7 @@ def stream_response_with_llm(
     *,
     query: str,
     intent: str,
+    secondary_intents: list[str],
     risk_level: str,
     tool_results: dict[str, Any],
     context_docs: list[dict[str, Any]],
@@ -664,6 +671,7 @@ def stream_response_with_llm(
         payload = _build_response_inputs(
             query=query,
             intent=intent,
+            secondary_intents=secondary_intents,
             risk_level=risk_level,
             tool_results=tool_results,
             context_docs=context_docs,
@@ -701,6 +709,7 @@ def generate_followups_with_llm(
     *,
     query: str,
     intent: str,
+    secondary_intents: list[str] | None = None,
     risk_level: str,
     conversation_history_text: str = "",
     assistant_profile: str = DEFAULT_ASSISTANT_PROFILE,
@@ -728,19 +737,11 @@ def generate_followups_with_llm(
             [
                 (
                     "system",
-                    "你是医疗客服助手的追问生成模块。"
-                    "只负责生成用户下一步最可能追问你的3个问题。"
-                    "必须严格按输出格式返回 JSON，不要任何额外文本。"
-                    "问题要简短、自然。注意是用户的提问，要站在用户的角度。",
+                    FOLLOWUP_SYSTEM_PROMPT,
                 ),
                 (
                     "human",
-                    "助手能力范围: {assistant_profile}\n"
-                    "用户问题: {query}\n"
-                    "意图: {intent}\n"
-                    "风险等级: {risk_level}\n"
-                    "短期记忆: {history_summary}\n"
-                    "输出格式要求:\n{format_instructions}\n",
+                    FOLLOWUP_USER_PROMPT,
                 ),
             ]
         )
@@ -748,6 +749,7 @@ def generate_followups_with_llm(
         payload = {
             "query": query,
             "intent": intent,
+            "secondary_intents": ", ".join(secondary_intents or []) if secondary_intents else "none",
             "risk_level": risk_level,
             "assistant_profile": str(assistant_profile or DEFAULT_ASSISTANT_PROFILE),
             "history_summary": _summarize_history(conversation_history_text, max_len=420),
@@ -766,4 +768,67 @@ def generate_followups_with_llm(
     except Exception as exc:
         # 追问失败不影响主回答，返回 None 交给上层默认追问。
         log_error("llm_chains.generate_followups_with_llm", exc)
+        return None
+
+
+def generate_memory_fact_with_llm(
+    *,
+    query: str,
+    intent: str,
+    rule_fact: str,
+    m3_events: list[str] | None = None,
+    llm_runtime: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """把候选事实清洗成可持久化的长期记忆条目。"""
+
+    fact_runtime = _with_forced_volcengine_model(
+        llm_runtime,
+        forced_model=VOLCENGINE_FAST_MODEL,
+        force_thinking_false=True,
+        reason="m2_memory_clean",
+        intent=str(intent or "").strip().lower(),
+    )
+    if not is_tongyi_enabled(fact_runtime):
+        return None
+
+    try:
+        parser = PydanticOutputParser(pydantic_object=MemoryFactOutput)
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    MEMORY_FACT_SYSTEM_PROMPT,
+                ),
+                (
+                    "human",
+                    MEMORY_FACT_USER_PROMPT,
+                ),
+            ]
+        )
+
+        payload = {
+            "query": str(query or "").strip(),
+            "intent": str(intent or "").strip() or "other",
+            "rule_fact": str(rule_fact or "").strip(),
+            "m3_events": "；".join(str(x) for x in (m3_events or []) if str(x).strip()) or "(无)",
+            "format_instructions": parser.get_format_instructions(),
+        }
+        log_prompt("llm_chains.generate_memory_fact_with_llm", prompt, payload)
+
+        chain = prompt | _followup_llm(fact_runtime)
+        raw = chain.invoke(payload)
+        raw_text = _extract_text(raw)
+        log_response("llm_chains.generate_memory_fact_with_llm", raw_text)
+
+        parsed = parser.parse(raw_text)
+        fact = re.sub(r"\s+", " ", str(parsed.fact or "")).strip()
+        if len(fact) > 120:
+            fact = fact[:120]
+        return {
+            "fact": fact,
+            "salience": _to_confidence(parsed.salience, 0.5),
+            "is_profile_fact": bool(parsed.is_profile_fact),
+        }
+    except Exception as exc:
+        log_error("llm_chains.generate_memory_fact_with_llm", exc)
         return None

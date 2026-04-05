@@ -39,7 +39,7 @@
 
       <button id="toggle-meta" class="toggle-btn strong" type="button" aria-pressed="false">显示状态信息</button>
       <div class="llm-switcher" aria-label="模型设置">
-        <div class="llm-switcher-title">普通咨询模型</div>
+        <div class="llm-switcher-title">医疗助手模型</div>
         <label class="llm-switcher-label" for="llm-model-select">模型</label>
         <select id="llm-model-select" class="llm-select">
           <option value="deepseek-v3-2-251201">DeepSeek V3.2</option>
@@ -57,11 +57,11 @@
         <section class="chat">
           <div class="top-left-tools">
             <div id="mode-switch" class="mode-switch" role="tablist" aria-label="咨询模式切换">
-              <button id="mode-normal" class="mode-tab is-active" type="button" role="tab" aria-selected="true">普通咨询</button>
+              <button id="mode-normal" class="mode-tab is-active" type="button" role="tab" aria-selected="true">医疗助手</button>
               <button id="mode-tcm" class="mode-tab" type="button" role="tab" aria-selected="false">中医辨证</button>
             </div>
           </div>
-          <button id="toggle-title-color" class="title-color-btn top-right" type="button" aria-pressed="false">背景: 白色</button>
+          <button id="toggle-title-color" class="title-color-btn top-right" type="button" aria-pressed="false">白色</button>
 
           <section id="tcm-flow" class="tcm-flow" hidden aria-label="中医辨证流程">
             <div id="flow-collect" class="flow-step is-active">
@@ -84,6 +84,15 @@
 
           <div id="messages" class="messages">
             <div id="thread" class="thread"></div>
+
+            <section id="tcm-guide" class="tcm-guide" hidden>
+              <div class="tcm-guide-title">你可以这样描述你的症状</div>
+              <p class="tcm-guide-desc">描述得越详细，辨证准确率通常越高。建议补充寒热、汗出、口渴、睡眠、二便、舌苔等信息。</p>
+              <div class="tcm-guide-examples">
+                <p>示例 1：我最近一周怕冷、乏力，胃口差，吃凉的会腹泻，舌苔白厚。</p>
+                <p>示例 2：我口干口渴、晚上睡不好，容易心烦，晚上盗汗，大便偏干。</p>
+              </div>
+            </section>
 
             <section id="suggestions" class="suggestions" hidden>
               <div class="suggestions-title">猜你想问</div>
@@ -124,10 +133,10 @@
                     class="toggle-mode-inline"
                     type="button"
                     aria-pressed="false"
-                    aria-label="切换中医模式"
-                    title="切换中医模式"
+                    aria-label="切换辨证模式"
+                    title="切换辨证模式"
                   >
-                    <span class="toggle-mode-label">中医模式</span>
+                    <span class="toggle-mode-label">辨证模式</span>
                     <span class="toggle-mode-pill" aria-hidden="true">
                       <span class="toggle-mode-thumb"></span>
                     </span>

@@ -1,6 +1,7 @@
 ﻿const form = document.getElementById("chat-form");
 const queryInput = document.getElementById("query");
 const sendBtn = document.getElementById("send-btn");
+const chatRoot = document.querySelector(".chat");
 const messages = document.getElementById("messages");
 const thread = document.getElementById("thread");
 const activityText = document.getElementById("activity");
@@ -12,6 +13,7 @@ const toggleMetaBtn = document.getElementById("toggle-meta");
 const toggleOnlineBtn = document.getElementById("toggle-online");
 const suggestionsSection = document.getElementById("suggestions");
 const suggestionList = document.getElementById("suggestion-list");
+const tcmGuideCard = document.getElementById("tcm-guide");
 const tcmPanel = document.getElementById("tcm-panel");
 const tcmForm = document.getElementById("tcm-form");
 const tcmSubmitBtn = document.getElementById("tcm-submit");
@@ -57,6 +59,7 @@ let backgroundColored = false;
 let tcmSubmitting = false;
 let shouldAutoScroll = true;
 let generalSessionId = "";
+let messageSequence = 0;
 const SCROLL_BOTTOM_THRESHOLD = 120;
 let currentMode = "normal";
 const DEFAULT_NORMAL_THREAD_HTML = thread ? thread.innerHTML : "";
@@ -81,6 +84,7 @@ const tcmState = {
   round: 0,
   confidence: 0,
   done: false,
+  guideDismissed: true,
 };
 
 const TCM_PROGRESS_STEPS = [
@@ -174,13 +178,39 @@ function setThinking(enabled) {
   toggleThinkingBtn.setAttribute("aria-pressed", String(enableThinking));
 }
 
+function syncTcmGuideVisibility() {
+  if (!tcmGuideCard) return;
+  const shouldShow = currentMode === "tcm" && Boolean(tcmState.active) && !Boolean(tcmState.guideDismissed);
+  tcmGuideCard.hidden = !shouldShow;
+}
+
+function dismissTcmGuide() {
+  if (tcmState.guideDismissed) return;
+  tcmState.guideDismissed = true;
+  syncTcmGuideVisibility();
+  updateMessagesVisibility();
+}
+
 function hasVisibleChatContent() {
   const hasThread = Boolean(thread && thread.children.length > 0);
   const hasSuggestions = Boolean(suggestionsSection && !suggestionsSection.hidden);
+  const hasTcmGuide = Boolean(tcmGuideCard && !tcmGuideCard.hidden);
   const hasFlow = Boolean(tcmFlow && !tcmFlow.hidden);
   const hasTcm = Boolean(tcmPanel && !tcmPanel.hidden);
   const hasActivity = Boolean(activityText && !activityText.hidden && String(activityText.textContent || "").trim());
-  return hasThread || hasSuggestions || hasFlow || hasTcm || hasActivity;
+  return hasThread || hasSuggestions || hasTcmGuide || hasFlow || hasTcm || hasActivity;
+}
+
+function shouldUseTcmCompactLayout() {
+  const inTcm = currentMode === "tcm";
+  const hasPanel = Boolean(tcmPanel && !tcmPanel.hidden);
+  const threadCount = thread ? thread.children.length : 0;
+  return inTcm && hasPanel && threadCount <= 4;
+}
+
+function syncCompactLayout() {
+  const compact = shouldUseTcmCompactLayout();
+  if (chatRoot) chatRoot.classList.toggle("tcm-compact", compact);
 }
 
 function updateMessagesVisibility() {
@@ -188,6 +218,7 @@ function updateMessagesVisibility() {
   const hasContent = hasVisibleChatContent();
   messages.classList.add("has-content");
   document.body.classList.toggle("conversation-started", hasContent);
+  syncCompactLayout();
 }
 
 function setBackgroundColored(enabled) {
@@ -195,7 +226,7 @@ function setBackgroundColored(enabled) {
   document.body.classList.toggle("bg-colored", backgroundColored);
   if (!toggleTitleColorBtn) return;
   toggleTitleColorBtn.setAttribute("aria-pressed", String(backgroundColored));
-  toggleTitleColorBtn.textContent = backgroundColored ? "背景: 流光" : "背景: 白色";
+  toggleTitleColorBtn.textContent = backgroundColored ? "流光" : "白色";
 }
 
 function shouldHideTcmInitMessage(text) {
@@ -244,10 +275,10 @@ function buildTcmSeedSummary() {
   const from = modeBridgeState.normal || { lastUser: "", lastAssistant: "" };
   const parts = [];
   if (from.lastUser) {
-    parts.push(`普通咨询用户问题: ${from.lastUser}`);
+    parts.push(`医疗助手用户问题: ${from.lastUser}`);
   }
   if (from.lastAssistant) {
-    parts.push(`普通咨询回复摘要: ${from.lastAssistant}`);
+    parts.push(`医疗助手回复摘要: ${from.lastAssistant}`);
   }
   return parts.join("；").slice(0, 380);
 }
@@ -315,8 +346,8 @@ function syncModeUi() {
   if (toggleModeInlineBtn) {
     toggleModeInlineBtn.classList.toggle("is-active", inTcm);
     toggleModeInlineBtn.setAttribute("aria-pressed", String(inTcm));
-    toggleModeInlineBtn.setAttribute("aria-label", inTcm ? "中医模式已开启，点击关闭" : "中医模式已关闭，点击开启");
-    toggleModeInlineBtn.title = inTcm ? "中医模式：开" : "中医模式：关";
+    toggleModeInlineBtn.setAttribute("aria-label", inTcm ? "辨证模式已开启，点击关闭" : "辨证模式已关闭，点击开启");
+    toggleModeInlineBtn.title = inTcm ? "辨证模式：开" : "辨证模式：关";
   }
   if (queryInput) {
     queryInput.placeholder = inTcm ? "请详细描述您的症状" : "有医疗相关的问题都可以问我哦~";
@@ -324,6 +355,7 @@ function syncModeUi() {
   if (tcmFlow) {
     tcmFlow.hidden = !inTcm;
   }
+  syncTcmGuideVisibility();
   if (!inTcm && tcmProgressCard) {
     tcmProgressCard.hidden = true;
   }
@@ -367,7 +399,7 @@ async function switchMode(mode, options = {}) {
         currentMode = "normal";
         syncModeUi();
         restoreModeView("normal");
-        createAssistantMessage(`中医模式启动失败: ${err}`);
+        createAssistantMessage(`辨证模式启动失败: ${err}`);
       } finally {
         setLoading(false);
       }
@@ -387,7 +419,7 @@ async function switchMode(mode, options = {}) {
   }
   syncModeUi();
   if (notify) {
-    createAssistantMessage("已切换到普通咨询模式。");
+    createAssistantMessage("已切换到医疗助手模式。");
   }
 }
 
@@ -401,6 +433,26 @@ function sourceLabel(source) {
 
 function intentLabel(intent) {
   return INTENT_LABEL_MAP[intent] || "待人工判断";
+}
+
+function normalizeIntentList(value, limit = 5) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const item of value) {
+    const key = String(item || "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+    if (out.length >= Math.max(1, Number(limit) || 5)) break;
+  }
+  return out;
+}
+
+function intentListLabel(value) {
+  const items = normalizeIntentList(value, 6);
+  if (!items.length) return "无";
+  return items.map((intent) => intentLabel(intent)).join("、");
 }
 
 function setActivity(text = "") {
@@ -738,7 +790,7 @@ function renderTcmAnalysisCard(data, options = {}) {
           <div class="tcm-analysis-item-value">${formatConfidencePercent(payload.confidence)}</div>
         </div>
         <div class="tcm-analysis-item">
-          <span class="tcm-analysis-item-label">参考医案</span>
+          <span class="tcm-analysis-item-label">知识库</span>
           <div class="tcm-analysis-item-value">${escapeHtml(refsText || "暂无")}</div>
         </div>
       </div>
@@ -821,9 +873,16 @@ function finalizeAssistantStreamBubble(bubble, text) {
   });
 }
 
+function nextMessageId(role) {
+  messageSequence += 1;
+  return `${role}-${Date.now()}-${messageSequence}`;
+}
+
 function createMessageShell(role) {
   const article = document.createElement("article");
   article.className = `msg ${role}`;
+  article.dataset.messageId = nextMessageId(role);
+  article.dataset.role = role;
 
   const body = document.createElement("div");
   body.className = "msg-body";
@@ -848,7 +907,203 @@ function createMessageShell(role) {
     scrollToBottom();
   }
 
-  return { bubble, meta };
+  return { article, body, bubble, meta };
+}
+
+async function copyTextToClipboard(text) {
+  const raw = String(text || "");
+  if (!raw) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(raw);
+      return true;
+    }
+  } catch {}
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = raw;
+    textarea.setAttribute("readonly", "readonly");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    textarea.remove();
+    return Boolean(ok);
+  } catch {
+    return false;
+  }
+}
+
+function createUserActionButton(action, text) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "user-action-btn";
+  btn.dataset.userAction = action;
+  btn.dataset.userText = text;
+
+  if (action === "copy") {
+    btn.setAttribute("aria-label", "复制");
+    btn.title = "复制";
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="7" width="11" height="13" rx="2"></rect>
+        <path d="M5 16V5c0-1.1.9-2 2-2h9"></path>
+      </svg>
+    `;
+    return btn;
+  }
+
+  btn.setAttribute("aria-label", "编辑");
+  btn.title = "编辑";
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 20h4l10.2-10.2-4-4L4 16v4z"></path>
+      <path d="M13.8 5.8l4 4"></path>
+    </svg>
+  `;
+  return btn;
+}
+
+function createUserActions(text) {
+  const actions = document.createElement("div");
+  actions.className = "msg-actions user-actions";
+  actions.appendChild(createUserActionButton("copy", text));
+  actions.appendChild(createUserActionButton("edit", text));
+  return actions;
+}
+
+function createAssistantActionButton(action) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "assistant-action-btn";
+  btn.dataset.assistantAction = action;
+
+  if (action === "copy") {
+    btn.setAttribute("aria-label", "复制");
+    btn.title = "复制";
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="7" width="11" height="13" rx="2"></rect>
+        <path d="M5 16V5c0-1.1.9-2 2-2h9"></path>
+      </svg>
+    `;
+    return btn;
+  }
+
+  if (action === "regenerate") {
+    btn.setAttribute("aria-label", "重新回答");
+    btn.title = "重新回答";
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 4v6h6"></path>
+        <path d="M20 20v-6h-6"></path>
+        <path d="M20 9a8 8 0 0 0-14.3-4.9L4 6"></path>
+        <path d="M4 15a8 8 0 0 0 14.3 4.9L20 18"></path>
+      </svg>
+    `;
+    return btn;
+  }
+
+  if (action === "upvote") {
+    btn.setAttribute("aria-label", "点赞");
+    btn.title = "点赞";
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 22H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h4"></path>
+        <path d="M9 11l3-8c.3-.8 1.1-1.3 1.9-1.1 1 .2 1.6 1.1 1.4 2.1L14.5 11H20a2 2 0 0 1 2 2l-1 7a2 2 0 0 1-2 2H9z"></path>
+      </svg>
+    `;
+    return btn;
+  }
+
+  btn.setAttribute("aria-label", "点踩");
+  btn.title = "点踩";
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 2h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4"></path>
+      <path d="M15 13l-3 8c-.3.8-1.1 1.3-1.9 1.1-1-.2-1.6-1.1-1.4-2.1L9.5 13H4a2 2 0 0 1-2-2l1-7a2 2 0 0 1 2-2h10z"></path>
+    </svg>
+  `;
+  return btn;
+}
+
+function createAssistantActions() {
+  const actions = document.createElement("div");
+  actions.className = "msg-actions assistant-actions";
+  actions.appendChild(createAssistantActionButton("copy"));
+  actions.appendChild(createAssistantActionButton("regenerate"));
+  actions.appendChild(createAssistantActionButton("upvote"));
+  actions.appendChild(createAssistantActionButton("downvote"));
+  return actions;
+}
+
+function bindAssistantRecord(article, payload = {}) {
+  if (!article) return;
+  const sourceQuery = String(payload.sourceQuery || "").trim();
+  const answerText = String(payload.answerText || "").trim();
+  const sessionId = String(payload.sessionId || generalSessionId || "").trim();
+  const meta = payload.meta && typeof payload.meta === "object" ? payload.meta : {};
+
+  article.dataset.sourceQuery = sourceQuery;
+  article.dataset.answerText = answerText;
+  article.dataset.sessionId = sessionId;
+  article.dataset.meta = JSON.stringify(
+    {
+      intent: String(meta.intent || ""),
+      secondary_intents: normalizeIntentList(meta.secondary_intents || [], 4),
+      intent_candidates: normalizeIntentList(meta.intent_candidates || [], 6),
+      intent_source: String(meta.intent_source || ""),
+      risk_level: String(meta.risk_level || ""),
+      handoff: Boolean(meta.handoff),
+      confidence: Number(meta.confidence || 0),
+      citations: Array.isArray(meta.citations) ? meta.citations.slice(0, 12) : [],
+    },
+  );
+}
+
+function ensureAssistantActions(shell, payload = {}) {
+  if (!shell || !shell.body || !shell.article) return;
+  let actions = shell.body.querySelector(".assistant-actions");
+  if (!actions) {
+    actions = createAssistantActions();
+    shell.body.appendChild(actions);
+  }
+  bindAssistantRecord(shell.article, payload);
+}
+
+async function sendAssistantFeedback(article, reaction) {
+  if (!article) return false;
+  const sourceQuery = String(article.dataset.sourceQuery || "").trim();
+  const answerText = String(article.dataset.answerText || "").trim();
+  if (!answerText) return false;
+
+  let meta = {};
+  try {
+    meta = JSON.parse(String(article.dataset.meta || "{}")) || {};
+  } catch {
+    meta = {};
+  }
+
+  const payload = {
+    reaction,
+    session_id: String(article.dataset.sessionId || generalSessionId || "").trim(),
+    message_id: String(article.dataset.messageId || "").trim(),
+    user_query: sourceQuery,
+    assistant_answer: answerText,
+    meta,
+  };
+
+  const resp = await fetch("/api/chat/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) return false;
+  const data = await resp.json();
+  return Boolean(data && data.ok);
 }
 
 function applyMeta(metaNode, meta) {
@@ -859,11 +1114,17 @@ function applyMeta(metaNode, meta) {
   const confidencePct = `${Math.round((meta.confidence || 0) * 100)}%`;
   const refs = (meta.citations || []).join(" | ") || "无";
   const refsClass = refs === "无" ? "refs-empty" : "";
+  const secondary = intentListLabel(meta.secondary_intents || []);
+  const secondaryClass = secondary === "无" ? "refs-empty" : "";
+  const candidates = intentListLabel(meta.intent_candidates || []);
+  const candidatesClass = candidates === "无" ? "refs-empty" : "";
 
   metaNode.innerHTML = `
     <div class="meta-grid">
       <span class="meta-chip ${riskClass}"><strong>风险</strong>${riskLabel(meta.risk_level)}</span>
       <span class="meta-chip"><strong>意图</strong>${intentLabel(meta.intent || "other")}</span>
+      <span class="meta-chip ${secondaryClass}"><strong>次意图</strong>${secondary}</span>
+      <span class="meta-chip ${candidatesClass}"><strong>候选意图</strong>${candidates}</span>
       <span class="meta-chip"><strong>来源</strong>${sourceLabel(meta.intent_source)}</span>
       <span class="meta-chip"><strong>置信度</strong>${confidencePct}</span>
       <span class="meta-chip ${handoffClass}"><strong>人工</strong>${meta.handoff ? "已触发" : "不需要"}</span>
@@ -874,34 +1135,62 @@ function applyMeta(metaNode, meta) {
 }
 
 function createUserMessage(text) {
-  const { bubble } = createMessageShell("user");
-  bubble.textContent = text;
-  updateBridgeState("user", text);
+  const raw = String(text || "");
+  const { article, body, bubble } = createMessageShell("user");
+  bubble.textContent = raw;
+  bubble.dataset.rawText = raw;
+  body.appendChild(createUserActions(raw));
+  article.classList.add("has-user-actions");
+  updateBridgeState("user", raw);
   followToBottom();
 }
 
 function createAssistantMessage(text, meta = null) {
-  const { bubble, meta: metaNode } = createMessageShell("assistant");
+  const shell = createMessageShell("assistant");
+  const { bubble, meta: metaNode } = shell;
   setAssistantBubbleMarkdown(bubble, text);
   updateBridgeState("assistant", text);
   if (meta) {
     applyMeta(metaNode, meta);
   }
+  ensureAssistantActions(shell, {
+    sourceQuery: "",
+    answerText: text,
+    sessionId: generalSessionId,
+    meta: meta || {},
+  });
   scrollToBottom();
 }
 
-function createAssistantStreamMessage() {
+function createAssistantStreamMessage(sourceQuery = "") {
   const shell = createMessageShell("assistant");
   shell.bubble.classList.add("streaming");
   shell.bubble.classList.remove("has-text");
+  ensureAssistantActions(shell, {
+    sourceQuery,
+    answerText: "",
+    sessionId: generalSessionId,
+    meta: {},
+  });
   return shell;
 }
 
 function renderSuggestions(items) {
   if (!suggestionsSection || !suggestionList) return;
 
+  if (currentMode === "tcm") {
+    suggestionList.innerHTML = "";
+    suggestionsSection.hidden = true;
+    updateMessagesVisibility();
+    return;
+  }
+
   suggestionList.innerHTML = "";
-  const questions = Array.isArray(items) ? items.filter((x) => String(x || "").trim()) : [];
+  const questions = Array.isArray(items)
+    ? items
+        .map((x) => String(x || "").replace(/\s*→\s*$/u, "").trim())
+        .filter((x) => x)
+    : [];
 
   if (!questions.length) {
     suggestionsSection.hidden = true;
@@ -1158,7 +1447,7 @@ function parseSSEBlock(block) {
 }
 
 async function streamAssistantReply(query) {
-  const streamMsg = createAssistantStreamMessage();
+  const streamMsg = createAssistantStreamMessage(query);
   let finalMeta = null;
   const streamParts = [];
   let hasToken = false;
@@ -1265,6 +1554,12 @@ async function streamAssistantReply(query) {
   streamMsg.bubble.classList.remove("streaming");
   streamMsg.bubble.classList.remove("has-text");
   applyMeta(streamMsg.meta, finalMeta);
+  ensureAssistantActions(streamMsg, {
+    sourceQuery: query,
+    answerText: finalText,
+    sessionId: String((finalMeta && finalMeta.session_id) || generalSessionId || "").trim(),
+    meta: finalMeta || {},
+  });
   scrollToBottom(true);
   const sid = String((finalMeta && finalMeta.session_id) || "").trim();
   if (sid) {
@@ -1290,6 +1585,7 @@ async function startTcmMode(seedQuery = "") {
   tcmState.round = 0;
   tcmState.confidence = 0;
   tcmState.done = false;
+  tcmState.guideDismissed = false;
 
   clearTcmProgress();
   clearTcmAnalysisCard();
@@ -1300,11 +1596,9 @@ async function startTcmMode(seedQuery = "") {
   }
   setTcmFlowStep("collect");
   syncModeUi();
-  renderSuggestions([
-    "我最近一周怕冷，经常感觉乏力、食欲差",
-    "我常常口干口渴，失眠多梦、一晚上醒好几次",
-    "退出中医辨证模式，回到普通咨询",
-  ]);
+  syncTcmGuideVisibility();
+  renderSuggestions([]);
+  updateMessagesVisibility();
 }
 
 function stopTcmMode(notify = true) {
@@ -1314,13 +1608,15 @@ function stopTcmMode(notify = true) {
   tcmState.round = 0;
   tcmState.confidence = 0;
   tcmState.done = false;
+  tcmState.guideDismissed = true;
   clearTcmProgress();
   clearTcmAnalysisCard();
   clearTcmQuestionnaire();
+  syncTcmGuideVisibility();
   setTcmFlowStep("collect");
   syncModeUi();
   if (notify) {
-    createAssistantMessage("已退出中医辨证模式，回到普通咨询。你可以继续描述问题。");
+    createAssistantMessage("已退出中医辨证模式，回到医疗助手。你可以继续描述问题。");
   }
 }
 
@@ -1471,7 +1767,7 @@ async function sendTcmCollect(query) {
     if (!hasAnalysisCard) {
       clearTcmAnalysisCard();
     }
-    renderSuggestions(["退出中医辨证模式，回到普通咨询"]);
+    renderSuggestions(["退出中医辨证模式，回到医疗助手"]);
     return;
   }
 
@@ -1484,7 +1780,7 @@ async function sendTcmCollect(query) {
     setTcmFlowStep("collect");
     clearTcmAnalysisCard();
     clearTcmQuestionnaire();
-    renderSuggestions(["退出中医辨证模式，回到普通咨询"]);
+    renderSuggestions(["退出中医辨证模式，回到医疗助手"]);
     return;
   }
   if (data.need_more) {
@@ -1499,7 +1795,7 @@ async function sendTcmCollect(query) {
     renderSuggestions([
       "我还会口渴、出汗多",
       "我睡眠差、大便偏稀",
-      "退出中医辨证模式，回到普通咨询",
+      "退出中医辨证模式，回到医疗助手",
     ]);
   } else {
     setTcmProgressDoneTo("questionnaire");
@@ -1510,7 +1806,7 @@ async function sendTcmCollect(query) {
     setTcmFlowStep("questionnaire");
     renderTcmAnalysisCard(data, { key: "round-0" });
     renderTcmQuestionnaire(data.questionnaire || []);
-    renderSuggestions(["先填写下方问卷再提交", "退出中医辨证模式，回到普通咨询"]);
+    renderSuggestions(["先填写下方问卷再提交", "退出中医辨证模式，回到医疗助手"]);
   }
 }
 
@@ -1599,7 +1895,7 @@ async function submitTcmQuestionnaire() {
       setActivity("新一轮问卷已生成，请继续作答。");
     }
 
-    renderSuggestions(data.follow_ups || ["退出中医辨证模式，回到普通咨询"]);
+    renderSuggestions(data.follow_ups || ["退出中医辨证模式，回到医疗助手"]);
   } catch (err) {
     setTcmSubmitStatus(`提交失败：${err}`, "error");
     setActivity(`问卷提交失败：${err}`);
@@ -1623,10 +1919,15 @@ function isTcmRestartQuery(query) {
   return query.includes("重新开始辨证");
 }
 
-async function sendQuery(rawQuery) {
+async function sendQuery(rawQuery, options = {}) {
   const query = String(rawQuery || "").trim();
   if (!query) return;
+  const suppressUserBubble = Boolean(options.suppressUserBubble);
   const inTcmMode = currentMode === "tcm";
+
+  if (inTcmMode) {
+    dismissTcmGuide();
+  }
 
   if (isTcmStartQuery(query)) {
     if (!inTcmMode) {
@@ -1646,7 +1947,7 @@ async function sendQuery(rawQuery) {
       updateBridgeState("user", query);
     }
     await switchMode("normal", { notify: false, hardExit: true });
-    createAssistantMessage("已退出中医辨证模式，回到普通咨询。你可以继续描述问题。");
+    createAssistantMessage("已退出中医辨证模式，回到医疗助手。你可以继续描述问题。");
     renderSuggestions([]);
     return;
   }
@@ -1674,7 +1975,11 @@ async function sendQuery(rawQuery) {
   }
 
   if (!inTcmMode) {
-    createUserMessage(query);
+    if (suppressUserBubble) {
+      updateBridgeState("user", query);
+    } else {
+      createUserMessage(query);
+    }
   } else {
     updateBridgeState("user", query);
   }
@@ -1727,9 +2032,72 @@ if (form) {
 }
 
 document.addEventListener("click", async (event) => {
+  const actionBtn = event.target.closest("button[data-user-action]");
+  if (actionBtn) {
+    const action = String(actionBtn.dataset.userAction || "").trim();
+    const text = String(actionBtn.dataset.userText || "").trim();
+    if (!text) return;
+
+    if (action === "copy") {
+      const copied = await copyTextToClipboard(text);
+      if (copied) {
+        actionBtn.classList.add("is-done");
+        setTimeout(() => {
+          actionBtn.classList.remove("is-done");
+        }, 900);
+      }
+      return;
+    }
+
+    if (action === "edit" && queryInput) {
+      queryInput.value = text;
+      queryInput.focus();
+      const len = queryInput.value.length;
+      queryInput.setSelectionRange(len, len);
+    }
+    return;
+  }
+
+  const assistantBtn = event.target.closest("button[data-assistant-action]");
+  if (assistantBtn) {
+    const article = assistantBtn.closest("article.msg.assistant");
+    if (!article) return;
+    const action = String(assistantBtn.dataset.assistantAction || "").trim();
+    const answerText = String(article.dataset.answerText || "").trim();
+    const sourceQuery = String(article.dataset.sourceQuery || "").trim();
+
+    if (action === "copy") {
+      if (!answerText) return;
+      const copied = await copyTextToClipboard(answerText);
+      if (copied) {
+        assistantBtn.classList.add("is-done");
+        setTimeout(() => assistantBtn.classList.remove("is-done"), 900);
+      }
+      return;
+    }
+
+    if (action === "regenerate") {
+      if (!sourceQuery) return;
+      await sendQuery(sourceQuery, { suppressUserBubble: true });
+      return;
+    }
+
+    if (action === "upvote" || action === "downvote") {
+      const reaction = action === "upvote" ? "up" : "down";
+      const ok = await sendAssistantFeedback(article, reaction);
+      if (!ok) return;
+
+      const allButtons = article.querySelectorAll("button[data-assistant-action='upvote'], button[data-assistant-action='downvote']");
+      allButtons.forEach((node) => node.classList.remove("is-active"));
+      assistantBtn.classList.add("is-active");
+      return;
+    }
+  }
+
   const target = event.target.closest("button[data-query]");
   if (!target) return;
   await sendQuery(target.dataset.query || "");
+  return;
 });
 
 if (queryInput) {
@@ -1738,7 +2106,8 @@ if (queryInput) {
       event.preventDefault();
       await sendQuery(queryInput.value);
     }
-  });
+  }
+  );
 }
 
 if (toggleDemoBtn) {
