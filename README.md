@@ -19,8 +19,8 @@
 
 
 
-- 语义路由分流：规则分类 + LLM 精修，动态分流到症状咨询、挂号流程、报告解读、用药安全、医学科普、人工服务等模块。
-- 双工作流编排：医疗咨询链路与中医辨证链路显式拆分，避免单 Prompt 承担全部业务逻辑。
+- 语义路由分流：规则分类 + LLM 精修，动态分流到症状咨询、产品咨询、报告解读、用药咨询、医学科普、人工服务等模块。
+- 双工作流编排：医疗咨询链路与辨证问诊链路显式拆分，避免单 Prompt 承担全部业务逻辑。
 - 分层记忆管理：普通咨询实现 `M0-M3 + M2` 组合记忆，覆盖最近窗口、段内摘要、长期事实与医疗核心实体，缓解长对话串味。
 - 多轮中医辨证 Agent：基于 LangGraph 构建 `Collect Graph + Round Graph`，通过动态问卷逐轮筛选证候并收敛。
 - 混合 RAG 检索：支持 `txt / md / docx / jsonl` 异构语料，使用关键词召回、向量召回、RRF 融合、来源权重与分源召回配额共同优化结果。
@@ -28,13 +28,21 @@
 - 稳定性与延迟优化：全链路异步并发、三级缓存、模型降级与规则兜底共同保证响应速度和稳定性。
 - 前端过程可视化：普通咨询支持 SSE 流式输出，中医模式支持阶段卡片、辨证结果卡、动态问卷卡，降低“长时间无反馈”的等待感。
 
+项目内置的专项多方位的系统测试，重点包括：
+
+- 复杂意图识别：覆盖模糊潜在意图、复合意图、多意图排序与单主意图路由。
+- 提示词注入与风控：覆盖高危症状、安全拦截、应急分流与规则兜底。
+- 多级记忆：覆盖 `M0` 窗口、`M1` 摘要、`M2` 长期事实、`M3` 医疗核心实体写入与召回。
+- API 与流式响应：覆盖 `/api/chat`、`/api/chat/stream`、`/api/chat/feedback`。
+- 并发与稳定性：通过 `Locust` 压测普通功能、安全风控与 SSE 流式接口。
+
 ## 核心能力与优化
 
 | 模块 | 实现方式 | 工程价值 |
 | --- | --- | --- |
 | 语义路由分流 | 规则意图分类 + LLM 结构化精修 + 低置信度转人工 | 让不同问题进入不同链路，实现专问专答 |
 | 医疗咨询工作流 | `normalize -> risk -> intent/retrieve并发 -> tools -> response` | 将安全、检索、工具、回复拆成可控阶段 |
-| 中医辨证工作流 | `Collect Graph + Round Graph` 双图状态机 | 支持多轮问诊、动态问卷与阶段性辨证 |
+| 辨证问诊工作流 | `Collect Graph + Round Graph` 双图状态机 | 支持多轮问诊、动态问卷与阶段性辨证 |
 | 记忆管理 | `M0 最近窗口 + M1 段内摘要 + M2 长期记忆 + M3 医疗核心实体` | 降低长对话遗忘、重复追问与跨意图串扰 |
 | 混合 RAG | 关键词检索 + 向量检索 + RRF + 分数补偿 + 来源权重 + 分源配额 | 提升异构语料召回质量，降低单一来源偏置 |
 | 语料处理 | `txt` 按行清洗截断，`md/docx` 按段抽取后再做句级聚合切分 | 兼顾书籍类语料覆盖率与检索粒度 |
@@ -56,7 +64,7 @@ flowchart LR
     API --> MODE{"Mode"}
 
     MODE -->|医疗助手| GP["General Pipeline"]
-    MODE -->|中医辨证| TP["TCM Workflow"]
+    MODE -->|辨证问诊| TP["TCM Workflow"]
 
     subgraph G["医疗助手链路"]
         GP --> G1["Normalize"]
@@ -70,7 +78,7 @@ flowchart LR
         G7 --> G8["SSE Token Stream"]
     end
 
-    subgraph T["中医辨证链路"]
+    subgraph T["辨证问诊链路"]
         TP --> T1["Collect Graph"]
         T1 --> T2["症状提取"]
         T2 --> T3["红旗筛查"]
@@ -100,7 +108,7 @@ flowchart LR
     T10 --> R5
 ```
 
-### 2. 中医辨证状态流
+### 2. 辨证问诊状态流
 
 ```mermaid
 flowchart TD
@@ -145,14 +153,14 @@ flowchart TD
 - `M2`：把高价值用户事实清洗后写入本地长期记忆文件，并按 query 检索召回。
 - `M3`：维护医疗核心实体记忆，重点记录过敏史、慢病/基础病、当前用药、妊娠/哺乳、手术住院史、家族史。
 
-为减少长对话“串味”，普通咨询不是简单追加历史，而是做了两层控制：
+为减少长对话“串味”，医疗咨询做了两层控制：
 
 - 先按意图与语义漂移把会话切成 segment，当前轮默认只读取活跃 segment 的 `M0 + M1`。
 - `M2` 检索阶段会优先召回同意图长期记忆，跨意图内容默认降权，只有相似度足够高才会回补。
 
-### 2. 中医辨证链路
+### 2. 辨证问诊链路
 
-中医链路位于 [`app/tcm_graph.py`](./app/tcm_graph.py) 与 [`app/tcm.py`](./app/tcm.py)。
+辨证链路位于 [`app/tcm_graph.py`](./app/tcm_graph.py) 与 [`app/tcm.py`](./app/tcm.py)。
 
 它被拆成两张显式状态图：
 
@@ -161,7 +169,7 @@ flowchart TD
 
 这套设计解决了两个核心问题：
 
-- 中医辨证不是单轮问答，而是需要逐步收集信息并逐轮筛选证候。
+- 辨证问诊不是单轮问答，而是需要逐步收集信息并逐轮筛选证候。
 - 同一轮里不仅要产出结果，还要产出“下一轮该问什么”的区分性问题。
 
 ### 3. 混合 RAG 设计
@@ -233,7 +241,8 @@ flowchart TD
 │  ├─ async_pipeline.py      # 医疗咨询异步流水线 + 三级缓存
 │  ├─ workflow.py            # 医疗咨询工作流与工具调度
 │  ├─ llm_chains.py          # 意图识别 / 主回复 / 流式输出 / 模型路由 / 记忆清洗
-│  ├─ tcm_graph.py           # 中医 Collect Graph + Round Graph
+│  ├─ prompts/               # 提示词集中管理（普通咨询主链路）
+│  ├─ tcm_graph.py           # 辩证 Collect Graph + Round Graph
 │  ├─ tcm.py                 # 中医检索、切分、问卷、辨证与总结
 │  ├─ web.py                 # Flask API + SSE 接口 + 普通咨询 M0-M3/M2 记忆
 │  ├─ guardrails.py          # 高危症状与敏感内容拦截
@@ -242,7 +251,7 @@ flowchart TD
 │  ├─ templates/index.html
 │  └─ static/app.js
 ├─ data/
-│  ├─ medical_cases_cleaned.txt
+│  ├─ medical_cases.txt
 │  ├─ 证候/
 │  ├─ 医案/
 │  └─ 中成药/patent_sections_candidates.jsonl
@@ -250,8 +259,12 @@ flowchart TD
 │  ├─ rebuild_milvus.py      # 重建 Milvus 集合
 │  ├─ export_patent_sections.py
 │  └─ eval.py                # 轻量评测脚本
-└─ docs/
-   └─ tcm_beginner_line_notes.md
+├─ tests/
+│  ├─ datasets/              # 专项测试集（意图/注入/记忆）
+│  ├─ locust/locustfile.py   # 并发与风控自动化压测脚本
+│  └─ test_*.py              # pytest 功能测试
+└─ requirements-dev.txt
+
 ```
 
 ## 快速开始
@@ -345,7 +358,31 @@ python -m app.main --query "最近总是头晕，应该挂什么科？"
 
 - `http://127.0.0.1:8000`
 
-## 评测与排障
+## 测试、评测与排障
+
+如果你只看一个章节，建议优先看这里。
+
+### 1. 一键测试汇总
+
+一键汇总 `pytest + 专项数据集指标`：
+
+```bash
+python scripts/test_report.py
+```
+
+带短时 `Locust` 压测：
+
+```bash
+python scripts/test_report.py --with-locust
+```
+
+如需落盘完整 JSON 报告：
+
+```bash
+python scripts/test_report.py --with-locust --json-out data/test_report_latest.json
+```
+
+### 2. Pytest 回归测试
 
 轻量评测脚本：
 
@@ -359,6 +396,47 @@ python scripts/eval.py
 - `intent_accuracy`
 - `handoff_rate`
 - `avg_latency_ms`
+
+执行全量回归：
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+当前专项覆盖：
+
+- `tests/test_intent_complex_dataset.py`：复杂意图识别数据集校验
+- `tests/test_intent_multi_stage.py`：多意图识别与回复链路校验
+- `tests/test_prompt_injection_guardrails.py`：提示词注入与高危分流校验
+- `tests/test_memory_multilevel.py`：`M0-M3/M2` 多级记忆回归
+- `tests/test_api_functional.py`：接口与流式响应回归
+
+已内置测试数据集：
+
+- `tests/datasets/intent_complex_cases.jsonl`：复杂意图、模糊潜在意图、多意图样本
+- `tests/datasets/prompt_injection_cases.jsonl`：提示词注入与风险拦截样本
+- `tests/datasets/memory_multilevel_cases.jsonl`：`M0-M3/M2` 多级记忆样本
+
+### 3. Locust 并发压测
+
+Locust 自动化并发测试覆盖产品功能 / 安全风控 / 流式响应：
+
+```bash
+# 先启动服务
+python -m app.web
+
+# 再开一个终端运行 Locust
+locust -f tests/locust/locustfile.py --host http://127.0.0.1:8000
+```
+
+Locust 脚本默认包含三类流量任务：
+
+- `/api/chat:functional`：正常功能请求与会话连续性
+- `/api/chat:security`：高风险/注入输入的拦截校验
+- `/api/chat/stream`：SSE 流式响应完整性（`meta/done` 事件）
+
+### 4. 排障建议
 
 如果需要排查模型编排与调用问题，可以观察终端中的 `LLM_TRACE` 日志，里面会打印：
 
