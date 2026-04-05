@@ -468,7 +468,7 @@ def finalize_node(state: TcmRoundState) -> TcmRoundState:
         f"置信度: {confidence:.2f}\n"
         f"分析: {result.get('analysis', '')}\n"
         f"建议: {result.get('advice', '')}\n"
-        f"参考医案行: {ref_text}"
+        f"知识库行: {ref_text}"
     )
 
     return {"done": True, "result": result, "message": message, "questionnaire": []}

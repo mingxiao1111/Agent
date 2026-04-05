@@ -5,8 +5,9 @@ from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
 
-from .guardrails import classify_intent, detect_high_risk, normalize_text
+from .guardrails import classify_intent, classify_intent_candidates, detect_high_risk, normalize_text
 from .llm_chains import (
+    INTENT_LABELS,
     classify_intent_with_llm,
     generate_followups_with_llm,
     generate_response_with_llm,
@@ -39,6 +40,29 @@ MEDICATION_SAFETY_KEYWORDS = (
     "处方药",
     "非处方",
 )
+
+
+def _merge_secondary_intents(primary: str, *groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen = {str(primary or "").strip()}
+    for group in groups:
+        for item in group:
+            intent = str(item or "").strip()
+            if intent not in INTENT_LABELS or intent in seen:
+                continue
+            seen.add(intent)
+            merged.append(intent)
+            if len(merged) >= 2:
+                return merged
+    return merged
+
+
+def _active_intents(state: AgentState) -> list[str]:
+    primary = str(state.get("intent", "other") or "other").strip() or "other"
+    secondary = state.get("secondary_intents", [])
+    if not isinstance(secondary, list):
+        secondary = []
+    return [primary] + _merge_secondary_intents(primary, secondary)
 
 
 def _compact_patent_hits(items: list[dict], limit: int = 3) -> list[dict]:
@@ -144,6 +168,7 @@ def emergency_node(state: AgentState) -> AgentState:
 def intent_node(state: AgentState) -> AgentState:
     text = state.get("normalized_input", "")
     fallback_intent = classify_intent(text)
+    fallback_candidates = classify_intent_candidates(text, max_items=3)
     routed = classify_intent_with_llm(
         query=text,
         fallback_intent=fallback_intent,
@@ -153,8 +178,16 @@ def intent_node(state: AgentState) -> AgentState:
             "thinking": bool(state.get("llm_thinking", False)),
         },
     )
+    primary_intent = str(routed.get("intent", fallback_intent) or fallback_intent).strip() or fallback_intent
+    secondary_intents = _merge_secondary_intents(
+        primary_intent,
+        list(routed.get("secondary_intents", []) or []),
+        [item for item in fallback_candidates if item != primary_intent],
+    )
     return {
-        "intent": routed["intent"],
+        "intent": primary_intent,
+        "secondary_intents": secondary_intents,
+        "intent_candidates": [primary_intent] + secondary_intents,
         "intent_confidence": routed["confidence"],
         "handoff_hint": routed["needs_handoff"],
         "intent_source": routed["source"],
@@ -172,25 +205,27 @@ def retrieve_node(state: AgentState) -> AgentState:
 
 def tools_node(state: AgentState) -> AgentState:
     intent = state.get("intent", "other")
+    active_intents = _active_intents(state)
+    intent_set = set(active_intents)
     text = state.get("normalized_input", "")
     user_text = state.get("user_input", "")
 
     results: dict = {}
     next_context_docs = list(state.get("context_docs", []))
     next_citations = list(state.get("citations", []))
-    if intent == "symptom_consult":
+    if "symptom_consult" in intent_set:
         department = recommend_department(text)
         results["department"] = department
         results["schedule"] = get_doctor_schedule(department)
 
-    elif intent == "appointment_process":
+    if "appointment_process" in intent_set:
         department = recommend_department(text)
         results["department"] = department
         results["schedule"] = get_doctor_schedule(department)
         results["booking_steps"] = "先完成实名认证，再选择科室与时段，最后支付挂号费。"
 
-    elif intent == "medication_question" or (
-        intent == "medical_knowledge" and _is_medication_safety_query(text, user_text)
+    if "medication_question" in intent_set or (
+        "medical_knowledge" in intent_set and _is_medication_safety_query(text, user_text)
     ):
         try:
             patent_hits = search_tcm_patent_medicines(
@@ -229,7 +264,7 @@ def tools_node(state: AgentState) -> AgentState:
                 }
             }
 
-    elif intent == "report_interpretation":
+    if "report_interpretation" in intent_set:
         results["report_notice"] = "可提供指标含义解释，但不能替代医生诊断。"
 
     return {
@@ -264,6 +299,10 @@ def _render_context_lines(state: AgentState) -> list[str]:
 
 def _build_rule_answer(state: AgentState, intent: str, handoff: bool) -> str:
     lines = ["以下是基于规则与知识库的建议，仅供分诊和就医流程参考:"]
+    secondary_intents = _merge_secondary_intents(intent, list(state.get("secondary_intents", []) or []))
+
+    if secondary_intents:
+        lines.append(f"补充识别到复合诉求，除主问题外还涉及: {'、'.join(secondary_intents)}。")
 
     if intent == "symptom_consult":
         department = state.get("tool_results", {}).get("department", "全科")
@@ -279,6 +318,8 @@ def _build_rule_answer(state: AgentState, intent: str, handoff: bool) -> str:
         lines.append("1) 你当前是就医咨询/挂号流程场景。")
         lines.append(f"2) 推荐科室: {department}。")
         lines.append(f"3) 挂号步骤: {steps}")
+        if "symptom_consult" in secondary_intents:
+            lines.append("4) 结合你提到的不适症状，若出现持续加重、呼吸困难或胸痛，请及时线下就医。")
 
     elif intent == "medication_question":
         patent_candidates = state.get("tool_results", {}).get("patent_medicine_candidates", [])
@@ -301,10 +342,14 @@ def _build_rule_answer(state: AgentState, intent: str, handoff: bool) -> str:
                 f"- {drug_name}: 适应症={details['indication']}；注意={details['caution']}；相互作用={details['interaction']}"
             )
         lines.append("4) 不提供个体化处方建议；如涉及孕期/慢病/儿童，请转人工药师。")
+        if "report_interpretation" in secondary_intents:
+            lines.append("5) 若你还想结合检查结果判断用药风险，请继续补充关键指标或报告结论。")
 
     elif intent == "report_interpretation":
         lines.append("1) 你当前是报告解读场景，我可以解释指标含义和常见影响因素。")
         lines.append("2) 检查结果异常是否需要治疗，需由临床医生结合病史判断。")
+        if "appointment_process" in secondary_intents:
+            lines.append("3) 如果你希望继续安排就诊，我也可以顺带帮你梳理挂号方向。")
 
     elif intent == "medical_knowledge":
         patent_candidates = state.get("tool_results", {}).get("patent_medicine_candidates", [])
@@ -329,6 +374,8 @@ def _build_rule_answer(state: AgentState, intent: str, handoff: bool) -> str:
         else:
             lines.append("1) 我可以做医学科普与疾病知识查询。")
             lines.append("2) 若你有具体症状，请补充主诉和持续时间，我会转到症状咨询流程。")
+        if "appointment_process" in secondary_intents:
+            lines.append("3) 如果你同时想了解就诊流程，我也可以继续帮你判断挂哪个科。")
 
     elif intent == "lifestyle_guidance":
         lines.append("1) 我可以提供健康生活方式建议（饮食/睡眠/运动/作息）。")
@@ -449,6 +496,21 @@ def _default_followups(intent: str, risk_level: str, query: str) -> list[str]:
     ]
 
 
+def _merged_followups(intents: list[str], risk_level: str, query: str, limit: int = 4) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for intent in intents:
+        for item in _default_followups(intent, risk_level, query):
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            ordered.append(text)
+            if len(ordered) >= limit:
+                return ordered
+    return ordered or _default_followups("other", risk_level, query)
+
+
 def _ensure_tcm_entry(follow_ups: list[str], intent: str) -> list[str]:
     tcm_entry = "进入中医辨证问诊模式"
     if intent not in {"symptom_consult", "other", "report_interpretation"}:
@@ -460,12 +522,13 @@ def _ensure_tcm_entry(follow_ups: list[str], intent: str) -> list[str]:
 
 def response_node(state: AgentState) -> AgentState:
     intent = state.get("intent", "other")
+    active_intents = _active_intents(state)
     risk_level = state.get("risk_level", "low")
     confidence = _calculate_confidence(state)
 
     handoff = (
         risk_level == "high"
-        or intent in HANDOFF_INTENTS
+        or any(item in HANDOFF_INTENTS for item in active_intents)
         or confidence < LOW_CONFIDENCE_HANDOFF_THRESHOLD
     )
 
@@ -484,7 +547,7 @@ def response_node(state: AgentState) -> AgentState:
     followups = (
         list(prefetched_followups)
         if isinstance(prefetched_followups, list) and prefetched_followups
-        else _default_followups(intent, risk_level, state.get("user_input", ""))
+        else _merged_followups(active_intents, risk_level, state.get("user_input", ""))
     )
     followups_future = None
     followups_executor = None
@@ -497,6 +560,7 @@ def response_node(state: AgentState) -> AgentState:
             generate_followups_with_llm,
             query=state.get("user_input", ""),
             intent=intent,
+            secondary_intents=active_intents[1:],
             risk_level=risk_level,
             conversation_history_text=history_text,
             llm_runtime=llm_runtime,
@@ -506,6 +570,7 @@ def response_node(state: AgentState) -> AgentState:
         llm_answer = generate_response_with_llm(
             query=state.get("user_input", ""),
             intent=intent,
+            secondary_intents=active_intents[1:],
             risk_level=risk_level,
             tool_results=state.get("tool_results", {}),
             context_docs=state.get("context_docs", []),
@@ -538,7 +603,8 @@ def response_node(state: AgentState) -> AgentState:
 
     follow_ups = _ensure_tcm_entry(followups, intent)
     summary = (
-        f"intent={intent}; source={state.get('intent_source', 'rule')}; risk={risk_level}; "
+        f"intent={intent}; secondary={','.join(active_intents[1:]) or 'none'}; "
+        f"source={state.get('intent_source', 'rule')}; risk={risk_level}; "
         f"query={state.get('user_input', '')}; confidence={confidence:.2f}"
     )
     return {

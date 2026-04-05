@@ -33,6 +33,7 @@ from langchain_core.tools import tool
 
 from .chat_backend import build_chat_model
 from .llm_trace import log_error, log_prompt, log_response
+from .model_compat import supports_volcengine_reasoning, volcengine_reasoning_kwargs
 from .online_search import fetch_tavily_context
 
 CASE_FILE = "medical_cases_cleaned.txt"
@@ -513,9 +514,13 @@ def _build_tcm_chat_model(*, model_name: str, temperature: float) -> Any:
         from langchain_openai import ChatOpenAI
 
         kwargs: dict[str, Any] = {}
-        if _tcm_thinking_enabled():
-            # OpenAI-compatible 扩展参数应放在 extra_body，避免变成 create 顶层参数。
-            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        if supports_volcengine_reasoning(model_name):
+            kwargs.update(
+                volcengine_reasoning_kwargs(
+                    model_name=model_name,
+                    thinking=_tcm_thinking_enabled(),
+                )
+            )
 
         return ChatOpenAI(
             model=str(model_name or "").strip(),

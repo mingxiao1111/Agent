@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .guardrails import classify_intent
+from .guardrails import classify_intent, classify_intent_candidates
 from .llm_chains import generate_followups_with_llm
 from .state import AgentState
 from .workflow import (
@@ -292,7 +292,7 @@ async def run_agent_async_pipeline(
             "disable_llm_response": disable_llm_response,
             "disable_llm_followups": disable_llm_followups,
             "enable_online_search": enable_online_search,
-            "conversation_history_text": str(conversation_history_text or "")[:1200],
+            "conversation_history_text": str(conversation_history_text or "")[:2400],
             "llm_provider": str(llm_provider or "default"),
             "llm_model": str(llm_model or ""),
             "llm_thinking": bool(llm_thinking),
@@ -345,13 +345,21 @@ async def run_agent_async_pipeline(
     followup_prefetch_task: asyncio.Task[Any] | None = None
 
     if not bool(state.get("disable_llm_followups", False)):
-        pre_intent = classify_intent(normalized_input)
-        _trace(trace, "followups_prefetch", "start", intent_hint=pre_intent)
+        pre_candidates = classify_intent_candidates(normalized_input, max_items=3)
+        pre_intent = pre_candidates[0] if pre_candidates else classify_intent(normalized_input)
+        _trace(
+            trace,
+            "followups_prefetch",
+            "start",
+            intent_hint=pre_intent,
+            secondary=",".join(pre_candidates[1:]) or "none",
+        )
         followup_prefetch_task = asyncio.create_task(
             _run_blocking(
                 generate_followups_with_llm,
                 query=state.get("user_input", ""),
                 intent=pre_intent,
+                secondary_intents=pre_candidates[1:],
                 risk_level=state.get("risk_level", "low"),
                 conversation_history_text=state.get("conversation_history_text", ""),
                 llm_runtime={
@@ -403,6 +411,7 @@ async def run_agent_async_pipeline(
     tools_key = _build_key(
         {
             "intent": state.get("intent", "other"),
+            "secondary_intents": state.get("secondary_intents", []),
             "normalized_input": normalized_input,
             "user_input": state.get("user_input", ""),
             "context_docs": state.get("context_docs", []),
