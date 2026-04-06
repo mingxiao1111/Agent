@@ -30,9 +30,9 @@
 
 项目内置的专项多方位的系统测试，重点包括：
 
-- 复杂意图识别：覆盖模糊潜在意图、复合意图、多意图排序与单主意图路由。
-- 提示词注入与风控：覆盖高危症状、安全拦截、应急分流与规则兜底。
-- 多级记忆：覆盖 `M0` 窗口、`M1` 摘要、`M2` 长期事实、`M3` 医疗核心实体写入与召回。
+- 复杂意图识别：覆盖模糊潜在意图、多意图排序与单主意图路由。
+- 提示词注入与风控：覆盖高危症状、提示词注入。
+- 多级记忆：覆盖 `M0` 窗口、`M1` 摘要、`M3` 医疗核心实体写入与召回。
 - API 与流式响应：覆盖 `/api/chat`、`/api/chat/stream`、`/api/chat/feedback`。
 - 并发与稳定性：通过 `Locust` 压测普通功能、安全风控与 SSE 流式接口。
 
@@ -144,7 +144,6 @@ flowchart TD
 4. 强模型生成主回复，快模型并行预取“猜你想问”。
 5. 通过 SSE 把阶段状态和流式文本同时推给前端。
 
-这条链路的重点是：既保证医疗场景下的边界控制，又把能并行的阶段前置并行，减少用户等待。
 
 医疗咨询链路还实现了分层记忆：
 
@@ -174,13 +173,7 @@ flowchart TD
 
 ### 3. 混合 RAG 设计
 
-检索层的重点不只是“接一个向量库”，而是对异构语料做了针对性处理：
-
-- `txt` 医案：按行清洗，并截断到“处方”之前，减少药物列表对症状语义的污染。
-- `md` 证候：按段抽取，再按句聚合成较大 chunk。
-- `docx` 医案：直接解析 `word/document.xml` 提取段落，再按句聚合切分。
-- `md/docx` 书籍类语料：采用“中轴优先、向两侧扩散”的采样顺序，提高中部知识覆盖率。
-- 中成药语料：使用 `jsonl` 成品分段文件，一行一个条目，直接入库。
+采取分区策略，是不同内容、不同质量的数据分区处理
 
 检索融合策略包括：
 
@@ -190,8 +183,6 @@ flowchart TD
 - 分数补偿
 - 来源权重
 - 分源召回上限与保底配额
-
-这一层是项目里非常有辨识度的工程点，因为它明确处理了多源语料偏置，而不是简单“向量相似度前 K”。
 
 ### 4. 模型路由与降级策略
 
@@ -205,16 +196,7 @@ flowchart TD
 - 中医症状提取：`doubao-seed-2-0-mini-260215`
 - 中医辨证分析 / 问卷 / 总结：`deepseek-v3-2-251201`
 
-这样做的好处是：
-
-- 结构化任务优先用更快模型，控制延迟。
-- 推理和总结任务使用更强模型，保证生成质量。
-- 当模型不可用时，普通咨询仍可回退到规则与检索结果兜底。
-- 聊天模型与 embedding 模型都做了后端抽象，后续切换平台时无需重写业务链路。
-
 ### 5. 性能与稳定性优化
-
-这部分是项目从“能跑”走向“可展示”的关键：
 
 - 医疗咨询链路采用异步流水线，`intent` 与 `retrieve` 并行执行。
 - “猜你想问”与主回复流式生成并行，避免在末尾额外等待。
@@ -269,7 +251,7 @@ flowchart TD
 
 ## 快速开始
 
-### 1. 安装依赖
+### 安装依赖
 
 ```bash
 python -m venv .venv
@@ -277,55 +259,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. 推荐环境变量
-
-当前推荐使用“火山方舟聊天模型 + SiliconFlow 词嵌入 + Milvus 向量库”：
-
-```env
-VOLCENGINE_API_KEY=your_volcengine_key
-VOLCENGINE_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-VOLCENGINE_INTENT_MODEL=doubao-seed-2-0-mini-260215
-VOLCENGINE_CHAT_MODEL=deepseek-v3-2-251201
-
-TCM_VOLCENGINE_EXTRACT_MODEL=doubao-seed-2-0-mini-260215
-TCM_VOLCENGINE_MAIN_MODEL=deepseek-v3-2-251201
-TCM_VOLCENGINE_THINKING=0
-
-TCM_EMBEDDING_PROVIDER=siliconflow
-SILICONFLOW_API_KEY=your_siliconflow_key
-SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
-SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
-
-TCM_VECTOR_BACKEND=milvus
-MILVUS_URI=http://127.0.0.1:19530
-TCM_MILVUS_USE_HNSW=1
-CHAT_MEMORY_M0_TURNS=3
-CHAT_MEMORY_M1_MAX_CHARS=1600
-CHAT_MEMORY_MAX_SEGMENTS=12
-CHAT_MEMORY_SEGMENT_SWITCH_STREAK=2
-CHAT_MEMORY_SEGMENT_SIM_THRESHOLD=0.55
-CHAT_MEMORY_INTENT_CONF_THRESHOLD=0.75
-
-CHAT_MEMORY_M2_ENABLED=true
-CHAT_MEMORY_M2_RETRIEVE_TOPK=3
-CHAT_MEMORY_M2_MIN_SIM=0.12
-CHAT_MEMORY_M2_INTENT_SAME_BONUS=0.14
-CHAT_MEMORY_M2_INTENT_CROSS_PENALTY=0.08
-CHAT_MEMORY_M2_CROSS_INTENT_MIN_SIM=0.18
-
-CHAT_MEMORY_M2_LLM_CLEAN_ENABLED=false
-CHAT_MEMORY_M2_LLM_MIN_SALIENCE=0.45
-CHAT_MEMORY_M2_LLM_FAIL_STREAK_LIMIT=3
-CHAT_MEMORY_M2_LLM_COOLDOWN_SEC=300
-```
-
-如果需要回退到本地向量检索，可设置：
-
-```env
-TCM_VECTOR_BACKEND=sklearn
-```
-
-### 3. 启动 Milvus 并重建集合
+### 启动 Milvus 并重建集合
 
 Milvus 推荐按官方 Docker Compose 方式单独启动。启动完成后执行：
 
@@ -333,14 +267,7 @@ Milvus 推荐按官方 Docker Compose 方式单独启动。启动完成后执行
 python scripts/rebuild_milvus.py
 ```
 
-这个脚本会：
-
-- 清理旧 meta 信息
-- 重建医案集合
-- 重建中成药集合
-- 按当前配置创建 Milvus 索引
-
-### 4. 启动服务
+### 启动服务
 
 Web 服务：
 
@@ -354,13 +281,9 @@ CLI 调试：
 python -m app.main --query "最近总是头晕，应该挂什么科？"
 ```
 
-默认访问地址：
-
-- `http://127.0.0.1:8000`
 
 ## 测试、评测与排障
 
-如果你只看一个章节，建议优先看这里。
 
 ### 1. 一键测试汇总
 
