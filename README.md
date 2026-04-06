@@ -108,27 +108,6 @@ flowchart LR
     T10 --> R5
 ```
 
-### 2. 辨证问诊状态流
-
-```mermaid
-flowchart TD
-    A["用户主诉"] --> B["Collect Graph"]
-    B --> C["合并历史输入"]
-    C --> D["症状提取"]
-    D --> E["红旗筛查"]
-    E -->|命中| F["终止线上辨证并提示线下就医"]
-    E -->|通过| G["医案/证候混合检索"]
-    G --> H["候选证候推断"]
-    H --> I["首轮辨证分析"]
-    I --> J["生成动态问卷"]
-    J --> K["Round Graph"]
-    K --> L["融合本轮答案"]
-    L --> M["复检索 + 复评分"]
-    M --> N{"达到阈值或轮次上限?"}
-    N -->|否| J
-    N -->|是| O["输出阶段性辨证结果"]
-    O --> P["生成中成药建议"]
-```
 
 ## 技术方案
 
@@ -136,7 +115,7 @@ flowchart TD
 
 医疗咨询入口位于 [`app/async_pipeline.py`](./app/async_pipeline.py)、[`app/workflow.py`](./app/workflow.py)、[`app/llm_chains.py`](./app/llm_chains.py)。
 
-核心设计不是“直接把用户输入交给 LLM”，而是按阶段拆解：
+核心设计：
 
 1. 文本标准化与高危风险筛查。
 2. `intent` 与 `retrieve` 在安全检查后并发执行。
